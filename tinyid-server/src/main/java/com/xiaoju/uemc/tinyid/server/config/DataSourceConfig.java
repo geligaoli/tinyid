@@ -4,17 +4,17 @@ import org.apache.commons.beanutils.BeanUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceBuilder;
-import org.springframework.boot.bind.RelaxedPropertyResolver;
+import org.springframework.boot.context.properties.bind.BindResult;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySource;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 import javax.sql.DataSource;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * @author du_imba
@@ -34,44 +34,49 @@ public class DataSourceConfig {
     public DataSource getDynamicDataSource() {
         DynamicDataSource routingDataSource = new DynamicDataSource();
         List<String> dataSourceKeys = new ArrayList<>();
-        RelaxedPropertyResolver propertyResolver = new RelaxedPropertyResolver(environment, "datasource.tinyid.");
-        String names = propertyResolver.getProperty("names");
-        String dataSourceType = propertyResolver.getProperty("type");
+
+        Iterable<ConfigurationPropertySource> sources = ConfigurationPropertySources.get(environment);
+        Binder binder = new Binder(sources);
+        Properties properties = binder.bind("datasource.tinyid", Properties.class).get();
+
+        String names = properties.getProperty("names");
+        String dataSourceType = properties.getProperty("type");
 
         Map<Object, Object> targetDataSources = new HashMap<>(4);
         routingDataSource.setTargetDataSources(targetDataSources);
         routingDataSource.setDataSourceKeys(dataSourceKeys);
+
         // 多个数据源
         for (String name : names.split(SEP)) {
-            Map<String, Object> dsMap = propertyResolver.getSubProperties(name + ".");
-            DataSource dataSource = buildDataSource(dataSourceType, dsMap);
-            buildDataSourceProperties(dataSource, dsMap);
+            properties = binder.bind("datasource.tinyid." + name, Properties.class).get();
+            DataSource dataSource = buildDataSource(dataSourceType, properties);
+            buildDataSourceProperties(dataSource, properties);
             targetDataSources.put(name, dataSource);
             dataSourceKeys.add(name);
         }
         return routingDataSource;
     }
 
-    private void buildDataSourceProperties(DataSource dataSource, Map<String, Object> dsMap) {
+    private void buildDataSourceProperties(DataSource dataSource, Properties properties) {
         try {
             // 此方法性能差，慎用
-            BeanUtils.copyProperties(dataSource, dsMap);
+            BeanUtils.copyProperties(dataSource, properties);
         } catch (Exception e) {
             logger.error("error copy properties", e);
         }
     }
 
-    private DataSource buildDataSource(String dataSourceType, Map<String, Object> dsMap) {
+    private DataSource buildDataSource(String dataSourceType, Properties properties) {
         try {
             String className = DEFAULT_DATASOURCE_TYPE;
             if (dataSourceType != null && !"".equals(dataSourceType.trim())) {
                 className = dataSourceType;
             }
             Class<? extends DataSource> type = (Class<? extends DataSource>) Class.forName(className);
-            String driverClassName = dsMap.get("driver-class-name").toString();
-            String url = dsMap.get("url").toString();
-            String username = dsMap.get("username").toString();
-            String password = dsMap.get("password").toString();
+            String driverClassName = properties.getProperty("driver-class-name");
+            String url = properties.getProperty("url");
+            String username = properties.getProperty("username");
+            String password = properties.getProperty("password");
 
             return DataSourceBuilder.create()
                     .driverClassName(driverClassName)
